@@ -16,6 +16,7 @@ import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { SURAHS, surahAudioUrl, surahGradient } from "@/lib/surahs";
 import { AyahLyrics } from "./ayah-lyrics";
+import { SurahInfo } from "./surah-info";
 import { VinylDisc } from "./vinyl-disc";
 
 const N = SURAHS.length;
@@ -785,8 +786,16 @@ export function QuranPlayer() {
       className="flex min-h-dvh w-full flex-1 flex-col items-center justify-center gap-6 overflow-clip py-8"
       style={STEEL_BG}
     >
+      {/* ---------- surah info · player · lyrics ---------- */}
+      <div className="grid w-full max-w-[1320px] grid-cols-1 justify-items-center gap-6 px-4 xl:grid-cols-[minmax(0,1fr)_420px_minmax(0,1fr)] xl:items-stretch xl:gap-8">
+      <SurahInfo
+        current={current}
+        onPick={(i) => actions.current?.activate(i)}
+        className="order-3 w-full max-w-[420px] xl:order-1 xl:max-w-[340px] xl:justify-self-end xl:[contain:size]"
+      />
+
       {/* ---------- player panel ---------- */}
-      <div className="relative mx-4 w-[calc(100%-2rem)] max-w-[420px] rounded-md bg-gradient-to-b from-white/95 to-zinc-100/90 px-6 pt-5 pb-4 sm:px-8 sm:pt-6 shadow-[0_40px_70px_-25px_rgba(0,0,0,0.55),inset_0_0_0_1px_rgba(255,255,255,0.7)]">
+      <div className="relative order-1 w-full max-w-[420px] xl:order-2 rounded-md bg-gradient-to-b from-white/95 to-zinc-100/90 px-6 pt-5 pb-4 sm:px-8 sm:pt-6 shadow-[0_40px_70px_-25px_rgba(0,0,0,0.55),inset_0_0_0_1px_rgba(255,255,255,0.7)]">
         {/* panel light: edge-lit acrylic glow + glowing screws, driven together with the ring light */}
         <div
           ref={panelLightRef}
@@ -1140,8 +1149,6 @@ export function QuranPlayer() {
           </div>
         </div>
 
-        <AyahLyrics surah={surah?.number ?? null} audioRef={audioRef} />
-
         <audio
           ref={audioRef}
           preload="none"
@@ -1155,6 +1162,14 @@ export function QuranPlayer() {
           }}
           onDurationChange={(e) => setDuration(e.currentTarget.duration || 0)}
         />
+      </div>
+
+      {/* lyrics: right of the player on wide screens, under it on smaller ones */}
+      <AyahLyrics
+        surah={surah?.number ?? null}
+        audioRef={audioRef}
+        className="order-2 h-80 w-full max-w-[420px] xl:order-3 xl:h-auto xl:max-w-[380px] xl:justify-self-start xl:[contain:size]"
+      />
       </div>
 
       {/* ---------- vinyl reel ---------- */}
