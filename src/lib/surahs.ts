@@ -1,0 +1,26 @@
+export type Surah = {
+  number: number;
+  arabic: string;
+  name: string;
+  meaning: string;
+  /** top → middle → bottom of the sunset gradient */
+  colors: [string, string, string];
+};
+
+export const SURAHS: Surah[] = [
+  { number: 1, arabic: "الفاتحة", name: "Al-Fatihah", meaning: "The Opening", colors: ["#ffcf70", "#ff7b3a", "#6a2c70"] },
+  { number: 18, arabic: "الكهف", name: "Al-Kahf", meaning: "The Cave", colors: ["#ffd8a8", "#e8735a", "#2e3a6e"] },
+  { number: 23, arabic: "المؤمنون", name: "Al-Mu'minun", meaning: "The Believers", colors: ["#ffe08a", "#f58a42", "#8b3a62"] },
+  { number: 36, arabic: "يس", name: "Ya-Sin", meaning: "Ya Sin", colors: ["#ffc796", "#ff6b6b", "#4b2a7b"] },
+  { number: 43, arabic: "الزخرف", name: "Az-Zukhruf", meaning: "The Ornaments of Gold", colors: ["#ffd3b0", "#d77fa1", "#3b3b7a"] },
+  { number: 55, arabic: "الرحمن", name: "Ar-Rahman", meaning: "The Most Merciful", colors: ["#fff0b3", "#f6a04d", "#b0413e"] },
+  { number: 56, arabic: "الواقعة", name: "Al-Waqi'ah", meaning: "The Inevitable", colors: ["#ffb88c", "#de6262", "#2b2d5c"] },
+  { number: 67, arabic: "الملك", name: "Al-Mulk", meaning: "The Sovereignty", colors: ["#fbd786", "#f7797d", "#4a3b8f"] },
+];
+
+/** Full-surah recitation by Mishary Rashid Alafasy (alquran.cloud CDN). */
+export const surahAudioUrl = (n: number) =>
+  `https://cdn.islamic.network/quran/audio-surah/128/ar.alafasy/${n}.mp3`;
+
+export const surahGradient = ({ colors: [a, b, c] }: Surah) =>
+  `linear-gradient(175deg, ${a} 0%, ${b} 55%, ${c} 100%)`;
