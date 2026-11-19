@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="sun" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd27a"/>
+      <stop offset="0.55" stop-color="#ff7b3a"/>
+      <stop offset="1" stop-color="#6a2c70"/>
+    </linearGradient>
+    <linearGradient id="page" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fffaf0"/>
+      <stop offset="1" stop-color="#fde7c4"/>
+    </linearGradient>
+  </defs>
+  <!-- vinyl -->
+  <circle cx="32" cy="32" r="31.5" fill="#0c0c0c"/>
+  <circle cx="32" cy="32" r="29" fill="none" stroke="#2a2a2a" stroke-width="0.8"/>
+  <circle cx="32" cy="32" r="26.6" fill="none" stroke="#2a2a2a" stroke-width="0.8"/>
+  <path d="M10 22 A23 23 0 0 1 22 10" fill="none" stroke="#fff" stroke-opacity="0.22" stroke-width="2" stroke-linecap="round"/>
+  <!-- label -->
+  <circle cx="32" cy="32" r="23.5" fill="url(#sun)"/>
+  <!-- rehal (Quran stand) -->
+  <path d="M23.5 37.5 L40 47 M40.5 37.5 L24 47" stroke="#3a1a10" stroke-width="2.6" stroke-linecap="round"/>
+  <!-- open mushaf -->
+  <path d="M32 22.5 C27.5 20 22.5 20 18 21.8 V38 C22.5 36.3 27.5 36.4 32 38.8 Z" fill="url(#page)" stroke="#3a1a10" stroke-width="1.6" stroke-linejoin="round"/>
+  <path d="M32 22.5 C36.5 20 41.5 20 46 21.8 V38 C41.5 36.3 36.5 36.4 32 38.8 Z" fill="url(#page)" stroke="#3a1a10" stroke-width="1.6" stroke-linejoin="round"/>
+  <!-- text lines -->
+  <path d="M21.5 26 C24.5 25 27 25 29.5 26.2 M21.5 30 C24.5 29 27 29 29.5 30.2 M21.5 34 C24.5 33 27 33 29.5 34.2 M34.5 26.2 C37 25 39.5 25 42.5 26 M34.5 30.2 C37 29 39.5 29 42.5 30 M34.5 34.2 C37 33 39.5 33 42.5 34" fill="none" stroke="#c2410c" stroke-opacity="0.75" stroke-width="1.1" stroke-linecap="round"/>
+</svg>
