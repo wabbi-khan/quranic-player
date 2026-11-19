@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Amiri, Geist, Geist_Mono } from "next/font/google";
+import { Amiri, Amiri_Quran, Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -18,6 +18,13 @@ const amiri = Amiri({
   weight: ["400", "700"],
 });
 
+// Designed for Uthmani Quran text (pause marks, small high letters) – used for the synced ayahs.
+const amiriQuran = Amiri_Quran({
+  variable: "--font-amiri-quran",
+  subsets: ["arabic"],
+  weight: "400",
+});
+
 export const metadata: Metadata = {
   title: "Quran Ayat Play",
   description: "Quran Ayat Play",
@@ -27,10 +34,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} ${amiri.variable} h-full antialiased`}
-      suppressHydrationWarning
+      className={`${geistSans.variable} ${geistMono.variable} ${amiri.variable} ${amiriQuran.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col" suppressHydrationWarning>
+        {children}
+      </body>
     </html>
   );
 }

@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { SURAHS, surahAudioUrl, surahGradient } from "@/lib/surahs";
+import { AyahLyrics } from "./ayah-lyrics";
 import { VinylDisc } from "./vinyl-disc";
 
 const N = SURAHS.length;
@@ -60,9 +61,13 @@ type Actions = {
 
 type Gesture = {
   id: number;
+  pointerType: string;
   source: "reel" | "dock";
   x0: number;
   y0: number;
+  /** last known pointer position, used if the gesture is interrupted */
+  px: number;
+  py: number;
   lastX: number;
   lastT: number;
   vx: number;
@@ -356,7 +361,9 @@ export function QuranPlayer() {
       /** Stylus angle for the current playback position: outer groove → towards the label. */
       const armPlayAngle = () => {
         const p = audio.duration ? audio.currentTime / audio.duration : 0;
-        return ARM_START + (ARM_END - ARM_START) * gsap.utils.clamp(0, 1, p || 0);
+        return (
+          ARM_START + (ARM_END - ARM_START) * gsap.utils.clamp(0, 1, p || 0)
+        );
       };
       const lowerArm = () => {
         if (armDown && !armMoving) return;
@@ -383,11 +390,62 @@ export function QuranPlayer() {
       };
       const trackArm = () => {
         if (armDown && !armMoving)
-          gsap.to(arm, { rotation: armPlayAngle(), duration: 0.4, overwrite: true });
+          gsap.to(arm, {
+            rotation: armPlayAngle(),
+            duration: 0.4,
+            overwrite: true,
+          });
       };
+
+      // ================= audio-reactive light =================
+      // The recitation's loudness drives a --pulse CSS variable (0–1) that the lights read.
+      const rootEl = root.current!;
+      const reduceMotion = window.matchMedia(
+        "(prefers-reduced-motion: reduce)",
+      ).matches;
+      let audioCtx: AudioContext | null = null;
+      let analyser: AnalyserNode | null = null;
+      let samples = new Uint8Array(0);
+      let pulse = 0;
+      /** Created inside a user gesture (browsers require it); playback works without it. */
+      const ensureAnalyser = () => {
+        if (reduceMotion) return;
+        try {
+          if (!audioCtx) {
+            audioCtx = new AudioContext();
+            const source = audioCtx.createMediaElementSource(audio);
+            analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 512;
+            source.connect(analyser);
+            analyser.connect(audioCtx.destination);
+            samples = new Uint8Array(analyser.fftSize);
+          }
+          if (audioCtx.state === "suspended") void audioCtx.resume();
+        } catch {
+          analyser = null; // no pulse, but the recitation still plays
+        }
+      };
+      const pulseTick = () => {
+        let target = 0;
+        if (analyser && !audio.paused) {
+          analyser.getByteTimeDomainData(samples);
+          let sum = 0;
+          for (const s of samples) sum += ((s - 128) / 128) ** 2;
+          const rms = Math.sqrt(sum / samples.length);
+          target = gsap.utils.clamp(0, 1, (rms - 0.02) * 5);
+        }
+        // Quick attack, slow release – like a VU meter.
+        const next = pulse + (target - pulse) * (target > pulse ? 0.35 : 0.07);
+        if (Math.abs(next - pulse) > 0.002 || (next === 0) !== (pulse === 0)) {
+          pulse = next < 0.003 ? 0 : next;
+          rootEl.style.setProperty("--pulse", pulse.toFixed(3));
+        }
+      };
+      gsap.ticker.add(pulseTick);
 
       // ================= audio =================
       const playSurah = (s: number) => {
+        ensureAnalyser();
         const n = String(SURAHS[s].number);
         if (audio.dataset.surah !== n) {
           audio.dataset.surah = n;
@@ -524,8 +582,44 @@ export function QuranPlayer() {
         g.mode = "carry";
       };
 
+      /**
+       * End the current gesture. `released` = a real pointerup at (x, y). Otherwise the gesture
+       * was interrupted (pointercancel, lost capture, window blur, button already up…): no tap
+       * or fling, and a carried vinyl drops where the pointer was last seen — into the player
+       * if that's over the slot, else back to the reel.
+       */
+      const finish = (g: Gesture, x: number, y: number, released: boolean) => {
+        if (gesture !== g) return;
+        gesture = null;
+        well.dataset.ready = "false";
+        if (g.mode === "pending") {
+          if (!released) return;
+          if (g.source === "dock") togglePlay();
+          else if (g.item) activate(g.surah!, g.item);
+        } else if (g.mode === "scroll") {
+          if (released && performance.now() - g.lastT < 80) reelState.target -= g.vx * 260; // fling
+        } else if (g.mode === "carry") {
+          const s = g.surah!;
+          if (overWell(x, y)) dockSurah(s);
+          else if (g.source === "dock") eject();
+          else returnToReel(s);
+        }
+      };
+      const interrupt = () => {
+        if (gesture) finish(gesture, gesture.px, gesture.py, false);
+      };
+
       const onDown = (source: Gesture["source"]) => (e: PointerEvent) => {
-        if (gesture || e.button > 0) return;
+        if (e.button > 0) return;
+        if (gesture) {
+          // A second finger while dragging is ignored; anything else means the previous
+          // gesture never got its pointerup – finish it instead of refusing new drags forever.
+          if (e.pointerType === "touch" && gesture.pointerType === "touch") return;
+          interrupt();
+        }
+        // Stops the browser starting text selection / native drag-and-drop, which would
+        // steal the pointer mid-drag.
+        e.preventDefault();
         const item =
           source === "reel"
             ? (e.target as Element).closest<HTMLElement>("[data-reel-item]")
@@ -535,11 +629,14 @@ export function QuranPlayer() {
         (e.currentTarget as Element).setPointerCapture(e.pointerId);
         gesture = {
           id: e.pointerId,
+          pointerType: e.pointerType,
           source,
           x0: e.clientX,
           y0: e.clientY,
+          px: e.clientX,
+          py: e.clientY,
           lastX: e.clientX,
-          lastT: e.timeStamp,
+          lastT: performance.now(),
           vx: 0,
           mode: "pending",
           surah,
@@ -550,6 +647,13 @@ export function QuranPlayer() {
       const onMove = (e: PointerEvent) => {
         const g = gesture;
         if (!g || e.pointerId !== g.id) return;
+        // Mouse moving with no button held: the release happened where we couldn't hear it.
+        if (e.pointerType === "mouse" && e.buttons === 0) {
+          finish(g, e.clientX, e.clientY, false);
+          return;
+        }
+        g.px = e.clientX;
+        g.py = e.clientY;
         const dx = e.clientX - g.x0;
         const dy = e.clientY - g.y0;
         if (g.mode === "pending") {
@@ -563,9 +667,10 @@ export function QuranPlayer() {
         if (g.mode === "scroll") {
           const step = e.clientX - g.lastX;
           reelState.target -= step * 1.15;
-          g.vx = step / Math.max(1, e.timeStamp - g.lastT);
+          const now = performance.now();
+          g.vx = step / Math.max(1, now - g.lastT);
           g.lastX = e.clientX;
-          g.lastT = e.timeStamp;
+          g.lastT = now;
         } else if (g.mode === "carry") {
           gsap.to(flyers[g.surah!], {
             x: e.clientX - FLYER / 2,
@@ -581,22 +686,14 @@ export function QuranPlayer() {
       const onUp = (e: PointerEvent) => {
         const g = gesture;
         if (!g || e.pointerId !== g.id) return;
-        gesture = null;
-        well.dataset.ready = "false";
-        const cancelled = e.type === "pointercancel";
-        if (g.mode === "pending" && !cancelled) {
-          if (g.source === "dock") togglePlay();
-          else if (g.item) activate(g.surah!, g.item);
-        } else if (g.mode === "scroll") {
-          if (e.timeStamp - g.lastT < 80) reelState.target -= g.vx * 260; // fling
-        } else if (g.mode === "carry") {
-          const s = g.surah!;
-          const drop = !cancelled && overWell(e.clientX, e.clientY);
-          if (drop) dockSurah(s);
-          else if (g.source === "dock") eject();
-          else returnToReel(s);
-        }
+        if (e.type === "pointerup") finish(g, e.clientX, e.clientY, true);
+        else finish(g, g.px, g.py, false); // pointercancel coordinates aren't reliable
       };
+      // Losing pointer capture doesn't end a drag: move/up are heard on the window, so the
+      // vinyl keeps following the pointer and drops where it's actually released.
+      const onBlur = () => interrupt();
+      const onVisibility = () => document.hidden && interrupt();
+      const onContextMenu = (e: Event) => gesture && e.preventDefault();
 
       const onWheel = (e: WheelEvent) => {
         e.preventDefault();
@@ -608,11 +705,13 @@ export function QuranPlayer() {
       const dockDown = onDown("dock");
       reel.addEventListener("pointerdown", reelDown);
       dock.addEventListener("pointerdown", dockDown);
-      for (const el of [reel, dock]) {
-        el.addEventListener("pointermove", onMove);
-        el.addEventListener("pointerup", onUp);
-        el.addEventListener("pointercancel", onUp);
-      }
+      // Move/up are heard on the window, so the drag still ends if pointer capture is lost.
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
+      window.addEventListener("blur", onBlur);
+      window.addEventListener("contextmenu", onContextMenu);
+      document.addEventListener("visibilitychange", onVisibility);
       reel.addEventListener("wheel", onWheel, { passive: false });
       const onResize = () => {
         measure();
@@ -650,13 +749,16 @@ export function QuranPlayer() {
 
       return () => {
         gsap.ticker.remove(tick);
+        gsap.ticker.remove(pulseTick);
+        void audioCtx?.close();
         reel.removeEventListener("pointerdown", reelDown);
         dock.removeEventListener("pointerdown", dockDown);
-        for (const el of [reel, dock]) {
-          el.removeEventListener("pointermove", onMove);
-          el.removeEventListener("pointerup", onUp);
-          el.removeEventListener("pointercancel", onUp);
-        }
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
+        window.removeEventListener("blur", onBlur);
+        window.removeEventListener("contextmenu", onContextMenu);
+        document.removeEventListener("visibilitychange", onVisibility);
         reel.removeEventListener("wheel", onWheel);
         window.removeEventListener("resize", onResize);
       };
@@ -691,6 +793,11 @@ export function QuranPlayer() {
           aria-hidden
           className="pointer-events-none absolute inset-0 rounded-md opacity-0 shadow-[0_0_0_1px_#fff,0_0_18px_4px_rgba(255,246,228,0.9),0_0_60px_18px_rgba(255,214,160,0.55),0_0_140px_40px_rgba(255,190,130,0.3),inset_0_0_22px_4px_rgba(255,244,222,0.95),inset_0_0_60px_10px_rgba(255,226,180,0.35)]"
         >
+          {/* the acrylic breathes with the recitation */}
+          <div
+            className="absolute inset-0 rounded-md shadow-[0_0_50px_16px_rgba(255,214,160,0.6),0_0_160px_50px_rgba(255,180,110,0.35),inset_0_0_40px_8px_rgba(255,236,200,0.7)]"
+            style={{ opacity: "calc(var(--pulse, 0) * 0.85)" }}
+          />
           {[
             "top-3 left-3",
             "top-3 right-3",
@@ -799,7 +906,15 @@ export function QuranPlayer() {
                 aria-hidden
                 className="pointer-events-none absolute inset-0 opacity-0"
               >
-                <div className="absolute -inset-[1%] rounded-full shadow-[0_0_40px_14px_rgba(255,214,160,0.75),0_0_90px_30px_rgba(255,180,120,0.45)]" />
+                <div
+                  className="absolute -inset-[1%] rounded-full shadow-[0_0_40px_14px_rgba(255,214,160,0.75),0_0_90px_30px_rgba(255,180,120,0.45)]"
+                  style={{ scale: "calc(1 + var(--pulse, 0) * 0.06)" }}
+                />
+                {/* swells with the reciter's voice */}
+                <div
+                  className="absolute -inset-[1%] rounded-full shadow-[0_0_30px_10px_rgba(255,236,200,0.9),0_0_110px_44px_rgba(255,170,90,0.55)]"
+                  style={{ opacity: "var(--pulse, 0)" }}
+                />
                 <div className="absolute -inset-[1%] rounded-full border-4 border-white shadow-[0_0_4px_1px_#fff,0_0_14px_4px_rgba(255,248,232,0.95),inset_0_0_6px_2px_#fff,inset_0_0_18px_6px_rgba(255,236,205,0.55)]" />
               </div>
               <div
@@ -843,32 +958,100 @@ export function QuranPlayer() {
                 className="pointer-events-none absolute inset-0 size-full overflow-visible drop-shadow-[0_3px_3px_rgba(0,0,0,0.5)]"
               >
                 <defs>
-                  <linearGradient id={`${armId}-metal`} x1="0" y1="0" x2="1" y2="1">
+                  <linearGradient
+                    id={`${armId}-metal`}
+                    x1="0"
+                    y1="0"
+                    x2="1"
+                    y2="1"
+                  >
                     <stop offset="0" stopColor="#fafafa" />
                     <stop offset="0.5" stopColor="#a1a1aa" />
                     <stop offset="1" stopColor="#e4e4e7" />
                   </linearGradient>
-                  <radialGradient id={`${armId}-base`} cx="0.35" cy="0.35" r="0.8">
+                  <radialGradient
+                    id={`${armId}-base`}
+                    cx="0.35"
+                    cy="0.35"
+                    r="0.8"
+                  >
                     <stop offset="0" stopColor="#52525b" />
                     <stop offset="1" stopColor="#09090b" />
                   </radialGradient>
                 </defs>
-                <circle cx="118" cy="8" r="10" fill={`url(#${armId}-base)`} stroke="#71717a" strokeWidth="0.6" />
+                <circle
+                  cx="118"
+                  cy="8"
+                  r="10"
+                  fill={`url(#${armId}-base)`}
+                  stroke="#71717a"
+                  strokeWidth="0.6"
+                />
                 <g ref={armRef}>
                   {/* counterweight */}
-                  <line x1="118" y1="8" x2="126" y2="-3" stroke={`url(#${armId}-metal)`} strokeWidth="2.6" strokeLinecap="round" />
-                  <rect x="122.5" y="-9" width="7" height="9" rx="1.5" fill="#27272a" stroke="#52525b" strokeWidth="0.5" transform="rotate(36 126 -4.5)" />
+                  <line
+                    x1="118"
+                    y1="8"
+                    x2="126"
+                    y2="-3"
+                    stroke={`url(#${armId}-metal)`}
+                    strokeWidth="2.6"
+                    strokeLinecap="round"
+                  />
+                  <rect
+                    x="122.5"
+                    y="-9"
+                    width="7"
+                    height="9"
+                    rx="1.5"
+                    fill="#27272a"
+                    stroke="#52525b"
+                    strokeWidth="0.5"
+                    transform="rotate(36 126 -4.5)"
+                  />
                   {/* tube */}
-                  <path d="M118 8 L88 51 Q85.5 56 79.5 61.5" fill="none" stroke={`url(#${armId}-metal)`} strokeWidth="1.9" strokeLinecap="round" />
+                  <path
+                    d="M118 8 L88 51 Q85.5 56 79.5 61.5"
+                    fill="none"
+                    stroke={`url(#${armId}-metal)`}
+                    strokeWidth="1.9"
+                    strokeLinecap="round"
+                  />
                   {/* finger lift */}
-                  <path d="M80.5 60.5 l4.5 -1" stroke="#d4d4d8" strokeWidth="0.9" strokeLinecap="round" />
+                  <path
+                    d="M80.5 60.5 l4.5 -1"
+                    stroke="#d4d4d8"
+                    strokeWidth="0.9"
+                    strokeLinecap="round"
+                  />
                   {/* headshell + cartridge, aligned with the tube's end */}
                   <g transform="rotate(135 76 65)">
-                    <rect x="70" y="62" width="12" height="6" rx="1" fill={`url(#${armId}-metal)`} stroke="#a1a1aa" strokeWidth="0.3" />
-                    <rect x="72.5" y="63.2" width="5" height="3.6" rx="0.6" fill="#18181b" />
+                    <rect
+                      x="70"
+                      y="62"
+                      width="12"
+                      height="6"
+                      rx="1"
+                      fill={`url(#${armId}-metal)`}
+                      stroke="#a1a1aa"
+                      strokeWidth="0.3"
+                    />
+                    <rect
+                      x="72.5"
+                      y="63.2"
+                      width="5"
+                      height="3.6"
+                      rx="0.6"
+                      fill="#18181b"
+                    />
                     <circle cx="80" cy="65" r="0.7" fill="#3f3f46" />
                   </g>
-                  <circle cx="118" cy="8" r="3.5" fill={`url(#${armId}-metal)`} />
+                  <circle
+                    cx="118"
+                    cy="8"
+                    r="3.5"
+                    fill={`url(#${armId}-metal)`}
+                  />
                 </g>
               </svg>
             </div>
@@ -899,34 +1082,34 @@ export function QuranPlayer() {
         <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center">
           <span aria-hidden />
           <div className="flex items-center justify-center gap-3 sm:gap-6">
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Previous surah"
-            onClick={() => actions.current?.step(-1)}
-          >
-            <SkipBack className="fill-current" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={playing ? "Pause" : "Play"}
-            onClick={() => actions.current?.togglePlay()}
-          >
-            {playing ? (
-              <Pause className="fill-current" />
-            ) : (
-              <Play className="fill-current" />
-            )}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Next surah"
-            onClick={() => actions.current?.step(1)}
-          >
-            <SkipForward className="fill-current" />
-          </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Previous surah"
+              onClick={() => actions.current?.step(-1)}
+            >
+              <SkipBack className="fill-current" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={playing ? "Pause" : "Play"}
+              onClick={() => actions.current?.togglePlay()}
+            >
+              {playing ? (
+                <Pause className="fill-current" />
+              ) : (
+                <Play className="fill-current" />
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Next surah"
+              onClick={() => actions.current?.step(1)}
+            >
+              <SkipForward className="fill-current" />
+            </Button>
           </div>
 
           <div className="flex items-center justify-end gap-1">
@@ -957,9 +1140,12 @@ export function QuranPlayer() {
           </div>
         </div>
 
+        <AyahLyrics surah={surah?.number ?? null} audioRef={audioRef} />
+
         <audio
           ref={audioRef}
           preload="none"
+          crossOrigin="anonymous"
           onPlay={() => actions.current?.onAudioPlay()}
           onPause={() => actions.current?.onAudioPause()}
           onEnded={() => actions.current?.step(1)}
