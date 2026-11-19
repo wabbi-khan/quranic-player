@@ -1,7 +1,15 @@
 "use client";
 
 import { useId, useRef, useState, type KeyboardEvent } from "react";
-import { Pause, Play, SkipBack, SkipForward } from "lucide-react";
+import {
+  Pause,
+  Play,
+  SkipBack,
+  SkipForward,
+  Volume1,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 import { gsap, useGSAP } from "@/lib/gsap";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -16,6 +24,8 @@ const REEL = Array.from({ length: N * COPIES }, (_, k) => k);
 /** Untransformed size of the floating "flyer" vinyls (matches size-[200px]). */
 const FLYER = 200;
 const SPIN_SECONDS = 3.2;
+/** localStorage key for the listener's preferred volume. */
+const VOLUME_KEY = "quran-ayat-play:volume";
 /** Reel wave: max vertical amplitude (px) and wavelength relative to reel width. */
 const WAVE_AMP = 48;
 const WAVE_LENGTH = 1.1;
@@ -78,6 +88,28 @@ export function QuranPlayer() {
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [volume, setVolume] = useState(0.8);
+  const [muted, setMuted] = useState(false);
+
+  const changeVolume = (v: number) => {
+    const audio = audioRef.current;
+    setVolume(v);
+    if (audio) audio.volume = v;
+    // Dragging the volume up un-mutes; dragging it to zero counts as muted.
+    const mute = v === 0;
+    setMuted(mute);
+    if (audio) audio.muted = mute;
+    try {
+      localStorage.setItem(VOLUME_KEY, String(v));
+    } catch {}
+  };
+  const toggleMute = () => {
+    const audio = audioRef.current;
+    // Un-muting from zero restores a sensible level instead of staying silent.
+    if (muted && volume === 0) return changeVolume(0.5);
+    setMuted(!muted);
+    if (audio) audio.muted = !muted;
+  };
 
   useGSAP(
     (_ctx, contextSafe) => {
@@ -87,6 +119,17 @@ export function QuranPlayer() {
       // Ring light + panel light flicker, dim and switch off together.
       const light = [lightRef.current!, panelLightRef.current!];
       const audio = audioRef.current!;
+
+      // Restore the listener's saved volume (falls back to the default if storage is unavailable).
+      let savedVolume = 0.8;
+      try {
+        const v = Number.parseFloat(localStorage.getItem(VOLUME_KEY) ?? "");
+        if (v >= 0 && v <= 1) savedVolume = v;
+      } catch {}
+      audio.volume = savedVolume;
+      audio.muted = savedVolume === 0;
+      setVolume(savedVolume);
+      setMuted(savedVolume === 0);
       const reel = reelRef.current!;
       const items = itemRefs.current as HTMLDivElement[];
       const flyers = flyerRefs.current as HTMLDivElement[];
@@ -756,8 +799,10 @@ export function QuranPlayer() {
           <span className="w-10">{formatTime(duration)}</span>
         </div>
 
-        {/* controls */}
-        <div className="mt-2 flex items-center justify-center gap-6">
+        {/* controls: transport centred, volume on the right */}
+        <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center">
+          <span aria-hidden />
+          <div className="flex items-center justify-center gap-3 sm:gap-6">
           <Button
             variant="ghost"
             size="icon"
@@ -786,6 +831,34 @@ export function QuranPlayer() {
           >
             <SkipForward className="fill-current" />
           </Button>
+          </div>
+
+          <div className="flex items-center justify-end gap-1">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={muted ? "Unmute" : "Mute"}
+              aria-pressed={muted}
+              onClick={toggleMute}
+            >
+              {muted || volume === 0 ? (
+                <VolumeX />
+              ) : volume < 0.5 ? (
+                <Volume1 />
+              ) : (
+                <Volume2 />
+              )}
+            </Button>
+            <Slider
+              aria-label="Volume"
+              min={0}
+              max={1}
+              step={0.05}
+              value={[muted ? 0 : volume]}
+              onValueChange={(v) => changeVolume(Array.isArray(v) ? v[0] : v)}
+              className="w-14 sm:w-20"
+            />
+          </div>
         </div>
 
         <audio
