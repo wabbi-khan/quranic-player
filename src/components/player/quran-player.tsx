@@ -26,6 +26,15 @@ const FLYER = 200;
 const SPIN_SECONDS = 3.2;
 /** localStorage key for the listener's preferred volume. */
 const VOLUME_KEY = "quran-ayat-play:volume";
+/**
+ * Tonearm, in the slot's 0–100 SVG space (the slot is the circle centred at 50,50).
+ * It pivots at ARM_PIVOT; the arm is drawn in its "playing" pose (rotation 0).
+ * Rest swings it off the record; while playing it creeps inward from START to END.
+ */
+const ARM_PIVOT = "118 8";
+const ARM_REST = -29;
+const ARM_START = -4;
+const ARM_END = 4;
 /** Reel wave: max vertical amplitude (px) and wavelength relative to reel width. */
 const WAVE_AMP = 48;
 const WAVE_LENGTH = 1.1;
@@ -46,6 +55,7 @@ type Actions = {
   focusItem: (item: HTMLElement) => void;
   onAudioPlay: () => void;
   onAudioPause: () => void;
+  onProgress: () => void;
 };
 
 type Gesture = {
@@ -76,6 +86,7 @@ export function QuranPlayer() {
   const wellRef = useRef<HTMLDivElement>(null);
   const dockRef = useRef<HTMLDivElement>(null);
   const lightRef = useRef<HTMLDivElement>(null);
+  const armRef = useRef<SVGGElement>(null);
   const panelLightRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const reelRef = useRef<HTMLDivElement>(null);
@@ -83,6 +94,8 @@ export function QuranPlayer() {
   const flyerRefs = useRef<(HTMLDivElement | null)[]>([]);
   const actions = useRef<Actions | null>(null);
   const ringTextId = useId();
+  // SVG paint-server ids are referenced via url(#…), so keep them to safe characters.
+  const armId = `arm${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
 
   const [current, setCurrent] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -335,6 +348,44 @@ export function QuranPlayer() {
       const lightTo = (opacity: number) =>
         gsap.to(light, { opacity, duration: 0.6, overwrite: true });
 
+      // ================= tonearm =================
+      const arm = armRef.current!;
+      let armDown = false; // resting on the record
+      let armMoving = false; // swinging between rest and record
+      gsap.set(arm, { svgOrigin: ARM_PIVOT, rotation: ARM_REST });
+      /** Stylus angle for the current playback position: outer groove → towards the label. */
+      const armPlayAngle = () => {
+        const p = audio.duration ? audio.currentTime / audio.duration : 0;
+        return ARM_START + (ARM_END - ARM_START) * gsap.utils.clamp(0, 1, p || 0);
+      };
+      const lowerArm = () => {
+        if (armDown && !armMoving) return;
+        armDown = true;
+        armMoving = true;
+        gsap.to(arm, {
+          rotation: armPlayAngle(),
+          duration: 1.1,
+          ease: "power2.inOut",
+          overwrite: true,
+          onComplete: () => void (armMoving = false),
+        });
+      };
+      const liftArm = () => {
+        armDown = false;
+        armMoving = true;
+        gsap.to(arm, {
+          rotation: ARM_REST,
+          duration: 0.9,
+          ease: "power2.inOut",
+          overwrite: true,
+          onComplete: () => void (armMoving = false),
+        });
+      };
+      const trackArm = () => {
+        if (armDown && !armMoving)
+          gsap.to(arm, { rotation: armPlayAngle(), duration: 0.4, overwrite: true });
+      };
+
       // ================= audio =================
       const playSurah = (s: number) => {
         const n = String(SURAHS[s].number);
@@ -356,6 +407,7 @@ export function QuranPlayer() {
           setAway(s, true);
         }
         const prev = docked;
+        liftArm(); // stylus off while records change
         if (prev !== null && prev !== s) {
           // Swap: the previous vinyl flies back to the reel – lifted out of the player if it
           // had landed, or turned around mid-air if it was still on its way in.
@@ -391,7 +443,10 @@ export function QuranPlayer() {
             gsap.set(flyers[s], { autoAlpha: 0 });
             if (restart) lightOn();
             else lightTo(audio.paused ? 0.5 : 1);
-            if (!audio.paused) startSpin();
+            if (!audio.paused) {
+              startSpin();
+              lowerArm();
+            }
           },
         );
       };
@@ -403,6 +458,7 @@ export function QuranPlayer() {
         landed = false;
         setCurrent(null);
         resetSpin();
+        liftArm();
         audio.pause();
         lightTo(0);
         returnToReel(s);
@@ -452,6 +508,7 @@ export function QuranPlayer() {
           );
           gsap.set(dock, { autoAlpha: 0 });
           stopSpin();
+          liftArm();
           lightTo(0.3);
           landed = false;
         } else {
@@ -576,6 +633,7 @@ export function QuranPlayer() {
           setPlaying(true);
           if (docked !== null && landed) {
             startSpin();
+            lowerArm();
             lightTo(1);
           }
         }),
@@ -583,9 +641,11 @@ export function QuranPlayer() {
           setPlaying(false);
           if (docked !== null && landed) {
             stopSpin();
+            liftArm();
             lightTo(0.5);
           }
         }),
+        onProgress: safe(trackArm),
       };
 
       return () => {
@@ -775,6 +835,42 @@ export function QuranPlayer() {
                   <VinylDisc surah={surah ?? SURAHS[0]} />
                 </div>
               </div>
+
+              {/* tonearm: base stays put, the arm group swings around the pivot */}
+              <svg
+                viewBox="0 0 100 100"
+                aria-hidden
+                className="pointer-events-none absolute inset-0 size-full overflow-visible drop-shadow-[0_3px_3px_rgba(0,0,0,0.5)]"
+              >
+                <defs>
+                  <linearGradient id={`${armId}-metal`} x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0" stopColor="#fafafa" />
+                    <stop offset="0.5" stopColor="#a1a1aa" />
+                    <stop offset="1" stopColor="#e4e4e7" />
+                  </linearGradient>
+                  <radialGradient id={`${armId}-base`} cx="0.35" cy="0.35" r="0.8">
+                    <stop offset="0" stopColor="#52525b" />
+                    <stop offset="1" stopColor="#09090b" />
+                  </radialGradient>
+                </defs>
+                <circle cx="118" cy="8" r="10" fill={`url(#${armId}-base)`} stroke="#71717a" strokeWidth="0.6" />
+                <g ref={armRef}>
+                  {/* counterweight */}
+                  <line x1="118" y1="8" x2="126" y2="-3" stroke={`url(#${armId}-metal)`} strokeWidth="2.6" strokeLinecap="round" />
+                  <rect x="122.5" y="-9" width="7" height="9" rx="1.5" fill="#27272a" stroke="#52525b" strokeWidth="0.5" transform="rotate(36 126 -4.5)" />
+                  {/* tube */}
+                  <path d="M118 8 L88 51 Q85.5 56 79.5 61.5" fill="none" stroke={`url(#${armId}-metal)`} strokeWidth="1.9" strokeLinecap="round" />
+                  {/* finger lift */}
+                  <path d="M80.5 60.5 l4.5 -1" stroke="#d4d4d8" strokeWidth="0.9" strokeLinecap="round" />
+                  {/* headshell + cartridge, aligned with the tube's end */}
+                  <g transform="rotate(135 76 65)">
+                    <rect x="70" y="62" width="12" height="6" rx="1" fill={`url(#${armId}-metal)`} stroke="#a1a1aa" strokeWidth="0.3" />
+                    <rect x="72.5" y="63.2" width="5" height="3.6" rx="0.6" fill="#18181b" />
+                    <circle cx="80" cy="65" r="0.7" fill="#3f3f46" />
+                  </g>
+                  <circle cx="118" cy="8" r="3.5" fill={`url(#${armId}-metal)`} />
+                </g>
+              </svg>
             </div>
           </div>
         </div>
@@ -867,7 +963,10 @@ export function QuranPlayer() {
           onPlay={() => actions.current?.onAudioPlay()}
           onPause={() => actions.current?.onAudioPause()}
           onEnded={() => actions.current?.step(1)}
-          onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
+          onTimeUpdate={(e) => {
+            setTime(e.currentTarget.currentTime);
+            actions.current?.onProgress();
+          }}
           onDurationChange={(e) => setDuration(e.currentTarget.duration || 0)}
         />
       </div>
